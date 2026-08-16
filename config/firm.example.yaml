@@ -1,0 +1,144 @@
+# ============================================================
+#  Agentic Trading Firm - configuration
+#  Copy to config/firm.yaml and edit.  `python cli.py setup`
+#  writes this file for you via the intake interview.
+# ============================================================
+
+firm:
+  name: "Demo Capital"
+  # What the board (you) wants. Free text - the CEO agent reads this.
+  goal: >
+    Generate steady compounding income with strictly limited drawdown.
+    No scalping. Prefer higher-timeframe trend and breakout structure.
+  strategy_preference: "build_from_scratch"   # describe_own | build_from_scratch | copy_video
+  risk_tolerance: "moderate"                  # conservative | moderate | aggressive
+
+# ---------------- Trading mode ----------------
+trading:
+  # PAPER TRADING IS ON BY DEFAULT. Real orders are impossible while true.
+  paper_trading: true
+  # Second lock. BOTH must be flipped for live orders to leave the machine.
+  allow_live_orders: false
+
+  symbols: ["EURUSD", "GBPUSD", "XAUUSD"]
+  timeframe: "H1"
+  base_currency: "USD"
+
+# ---------------- Broker / terminal ----------------
+broker:
+  # simulated | mt5_native | mt4_bridge | mt5_bridge
+  #   simulated  - offline paper engine, no terminal needed (default)
+  #   mt5_native - MetaTrader5 python package (Windows / Wine, MT5 only)
+  #   mt5_bridge - ArenaBridge.mq5 Expert Advisor, file bridge (any OS)
+  #   mt4_bridge - ArenaBridge.mq4 Expert Advisor, file bridge (any OS)
+  kind: "simulated"
+
+  # --- mt5_native only ---
+  mt5_native:
+    login: 0
+    password: ""
+    server: ""
+    terminal_path: ""     # e.g. C:/Program Files/MetaTrader 5/terminal64.exe
+    magic: 770420
+
+  # --- mt4_bridge / mt5_bridge ---
+  # Point this at the terminal's MQL4/Files or MQL5/Files folder
+  # (Terminal -> File -> Open Data Folder -> MQL5 -> Files).
+  bridge:
+    files_dir: "./bridge"      # shared folder with the EA
+    magic: 770420
+    poll_seconds: 0.25
+    request_timeout: 20
+
+  # Accounts may be MT4 and MT5 side by side. Each entry becomes a
+  # separate broker connection the execution agent can route to.
+  accounts:
+    - id: "mt5-demo"
+      kind: "simulated"        # swap to mt5_bridge / mt5_native when ready
+      platform: "MT5"
+      enabled: true
+      starting_balance: 10000
+    - id: "mt4-demo"
+      kind: "simulated"        # swap to mt4_bridge when ready
+      platform: "MT4"
+      enabled: false
+      starting_balance: 10000
+
+# ---------------- Risk envelope (hard limits) ----------------
+# The risk agent can only tighten these, never loosen them.
+risk:
+  max_risk_per_trade_pct: 0.75      # % of equity risked per position
+  max_daily_loss_pct: 3.0           # kill switch for the day
+  max_total_drawdown_pct: 12.0      # kill switch for the firm
+  max_open_positions: 4
+  max_positions_per_symbol: 1
+  max_lots_per_order: 1.0
+  min_stop_distance_atr: 1.0
+  require_stop_loss: true
+  trading_hours_utc: [0, 24]
+  block_new_trades_on_friday_after_utc: 20
+
+  # Correlation guard. Counting positions is not measuring exposure: three
+  # trades expressing the same view are one leveraged bet. Correlation is
+  # measured on your broker's own bars, not a textbook table.
+  correlation_guard: true            # set false to disable the check entirely
+  correlation_threshold: 0.7         # |r| at or above this = "the same bet"
+  max_correlated_cluster_pct: 2.0    # cap on net risk in one correlated cluster
+
+# ---------------- Agents ----------------
+agents:
+  ceo:            { enabled: true,  model: "claude-sonnet-4-5",  budget_usd_per_day: 3.0 }
+  research:       { enabled: true,  model: "claude-sonnet-4-5",  budget_usd_per_day: 2.0 }
+  backtest:       { enabled: true,  model: "claude-haiku-4-5",   budget_usd_per_day: 1.0 }
+  risk:           { enabled: true,  model: "claude-sonnet-4-5",  budget_usd_per_day: 1.0 }
+  execution:      { enabled: true,  model: "claude-haiku-4-5",   budget_usd_per_day: 1.0 }
+  cost_optimizer: { enabled: true,  model: "claude-haiku-4-5",   budget_usd_per_day: 0.5 }
+  scout:          { enabled: true,  model: "claude-sonnet-4-5",  budget_usd_per_day: 1.0 }
+
+# ---------------- Scheduler ----------------
+schedule:
+  research_every_minutes: 60
+  backtest_every_minutes: 120
+  execution_every_minutes: 5
+  risk_review_every_minutes: 5
+  cost_review_every_minutes: 180
+  scan_every_minutes: 720
+  tick_seconds: 10
+
+# ---------------- LLM ----------------
+llm:
+  # anthropic | openrouter | groq | openai | together | deepseek | custom | none
+  provider: "anthropic"
+
+  # Leave api_key blank and put the key in .env instead (never commit it).
+  # Each provider reads its own variable:
+  #   anthropic  -> ANTHROPIC_API_KEY      openrouter -> OPENROUTER_API_KEY
+  #   groq       -> GROQ_API_KEY           openai     -> OPENAI_API_KEY
+  #   together   -> TOGETHER_API_KEY       deepseek   -> DEEPSEEK_API_KEY
+  #   custom     -> LLM_API_KEY
+  api_key: ""
+
+  # Only for provider: custom - any OpenAI-compatible /v1/chat/completions URL
+  # (LM Studio, Ollama, a self-hosted gateway, a free-tier proxy).
+  #   base_url: "http://localhost:1234/v1/chat/completions"
+  base_url: ""
+
+  # Agents ask for names like "claude-sonnet-4-5". On OpenRouter those need a
+  # vendor prefix, so set model_prefix: "anthropic" to get
+  # "anthropic/claude-sonnet-4-5". Leave blank if you set agents.<name>.model
+  # to a provider-native id directly (e.g. "llama-3.3-70b-versatile").
+  model_prefix: ""
+
+  # With no key the firm runs on the deterministic rule engine instead.
+  fallback_to_heuristics: true
+  # Spend cap. Models ending in ":free" are priced at $0.
+  max_daily_usd: 2.0    # hard firm-wide ceiling across ALL agents
+
+# How the firm supervises itself. Promotion to `approved` was always automatic;
+# these keys govern the reverse - pulling a strategy that has stopped working.
+supervision:
+  auto_quarantine: true       # act on broken strategies instead of only reporting
+  interval_seconds: 3600      # how often the risk agent runs a drift review
+  min_trades: 12              # real closed trades required before any demotion
+  include_demo: false         # never retire a strategy on seeded demo results
+  quarantine_no_baseline: false  # also pull approved strategies that have no backtest

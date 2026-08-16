@@ -1,0 +1,77 @@
+{
+  "name": "Bollinger_Band_Mean_Reversion_EURUSD_H1",
+  "spec": {
+    "name": "Bollinger Band Mean Reversion",
+    "tags": [
+      "reversion",
+      "bollinger",
+      "range"
+    ],
+    "popularity": 85,
+    "summary": "Fade closes outside the bands when RSI confirms an extreme.",
+    "entry": [
+      {
+        "type": "bb_touch",
+        "mode": "reversion"
+      },
+      {
+        "type": "rsi_extreme",
+        "period": 14,
+        "oversold": 30,
+        "overbought": 70
+      }
+    ],
+    "exit": {
+      "stop": "atr",
+      "atr_mult": 1.5,
+      "rr": 1.5
+    },
+    "agreement": 1,
+    "source": "catalogue"
+  },
+  "params": {
+    "atr_mult": 3,
+    "rr": 2.5,
+    "agreement": 0.5
+  },
+  "metrics": {
+    "strategy": "Bollinger Band Mean Reversion",
+    "symbol": "EURUSD",
+    "timeframe": "H1",
+    "trades": 20,
+    "wins": 15,
+    "losses": 5,
+    "win_rate": 75,
+    "total_r": 32.229,
+    "expectancy_r": 1.6115,
+    "profit_factor": 7.409,
+    "max_drawdown_r": 1.006,
+    "sharpe": 4.769,
+    "avg_bars_held": 35.5
+  },
+  "walk_forward": {
+    "folds": 3,
+    "oos_total_r": 3.654,
+    "oos_trades": 15,
+    "oos_expectancy_r": 0.2436,
+    "params_per_fold": [
+      {
+        "atr_mult": 2,
+        "rr": 1.5,
+        "agreement": 1
+      },
+      {
+        "atr_mult": 1,
+        "rr": 1.5,
+        "agreement": 0.5
+      },
+      {
+        "atr_mult": 2,
+        "rr": 3,
+        "agreement": 0.5
+      }
+    ],
+    "robust": true
+  },
+  "score": 2.6059
+}

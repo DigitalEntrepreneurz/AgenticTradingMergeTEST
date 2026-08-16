@@ -1,0 +1,20 @@
+.env
+config/firm.yaml
+firm/data/*.db
+bridge/
+__pycache__/
+*.pyc
+
+# test artifacts
+exports/ApiTest.*
+exports/TestExport.*
+exports/CompiledScan.*
+exports/BuiltinTpl.*
+exports/test_pack.json
+
+# added at repo init
+.env.local
+.env.*.local
+*.log
+.DS_Store
+firm/data/

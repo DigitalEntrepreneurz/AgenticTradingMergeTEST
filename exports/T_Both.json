@@ -1,0 +1,50 @@
+{
+  "name": "T_Both",
+  "spec": {
+    "name": "3 EMA Ribbon Pullback",
+    "tags": [
+      "trend",
+      "ema",
+      "pullback"
+    ],
+    "popularity": 96,
+    "summary": "Classic 9/21/50 EMA stack; enter on a pullback to the mid EMA while momentum stays constructive.",
+    "entry": [
+      {
+        "type": "ema_stack",
+        "fast": 9,
+        "mid": 21,
+        "slow": 50
+      },
+      {
+        "type": "pullback",
+        "to": "ema_mid",
+        "mid": 21,
+        "max_atr": 1.0
+      },
+      {
+        "type": "rsi_zone",
+        "period": 14,
+        "min": 45,
+        "max": 75
+      }
+    ],
+    "filters": [
+      {
+        "type": "session",
+        "from": 7,
+        "to": 17
+      }
+    ],
+    "exit": {
+      "stop": "atr",
+      "atr_mult": 1.5,
+      "rr": 2.0
+    },
+    "agreement": 0.6
+  },
+  "params": {},
+  "metrics": {},
+  "walk_forward": {},
+  "score": 1.0
+}

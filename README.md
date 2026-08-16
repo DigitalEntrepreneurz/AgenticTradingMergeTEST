@@ -57,6 +57,43 @@ no network required. Point it at MT4/MT5 when you're ready.
 
 ---
 
+## Before you use a real API key
+
+```bash
+python cli.py preflight              # checks everything, spends nothing
+python cli.py preflight --live-call  # + exactly one real request to prove the path
+```
+
+It verifies the safety locks, that `.env` exists and is gitignored and private,
+that no key is hard-coded in `config/firm.yaml`, that the firm-wide spend
+ceiling actually binds, that your model name resolves for the chosen provider
+(the OpenRouter vendor-prefix 404 is a specific check), broker connectivity, and
+that self-supervision is on. Failures are things to fix before spending money;
+warnings are judgement calls.
+
+Set your key up like this - never paste it into a chat, a config file, or a
+command that ends up in shell history:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+${EDITOR:-nano} .env        # paste the key into the file yourself
+```
+
+Two spend controls exist and both are enforced:
+
+* **per-agent** `agents.<name>.budget_usd_per_day` - stops one agent running away
+* **firm-wide** `llm.max_daily_usd` - a hard ceiling across every agent, checked
+  in `LLM.available` before each call. It ships at **$2.00/day**; raise it once
+  you have seen real numbers. The per-agent budgets total more than the ceiling
+  on purpose, so the ceiling is what actually binds.
+
+**Secrets never reach a log.** Some gateways echo your `Authorization` header
+back inside an error body, and those errors are written to the event log and
+rendered on the dashboard. Every provider error is passed through `redact()`
+first, which masks the configured key and any key-shaped token it has never
+seen. This is tested against a server that deliberately echoes the header back.
+
 ## Connecting MT4 and MT5
 
 Three back ends, chosen per account in `config/firm.yaml`:
@@ -307,7 +344,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          628 checks, all passing
+tests/test_firm.py          642 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -315,7 +352,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 628 passed, 0 failed
+python tests/test_firm.py            # 642 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

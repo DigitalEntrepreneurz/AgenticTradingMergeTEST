@@ -91,7 +91,63 @@ costs one download rather than three.
 So: yes, ten years of M1 is enough, and it is the right way to do it. Just do
 not trust a result that depends on sub-minute precision.
 
-### Bars or ticks?
+### Fitting ten years of history on a small disk
+
+History is stored gzipped (`firm/data/history/SYM_M1.csv.gz`). It is still a
+plain CSV underneath, so it stays greppable, but it is roughly 3.5x smaller.
+An existing uncompressed `.csv` keeps working; only new writes are compressed.
+
+Ten years of M1 for one symbol is ~3.6 million bars. Gzipped that is ~7 MB per
+symbol per decade in practice; plain CSV would be ~170 MB. Before importing
+anything, ask what it will cost:
+
+    python cli.py history --plan EURUSD GBPUSD XAUUSD USDJPY
+
+It prints the full-M1 size, the tiered size, what is already stored and whether
+it fits your budget (`--budget-mb`, default 100). If it does not fit, import one
+symbol at a time and trim after each:
+
+    python cli.py history --import-csv EURUSD DAT_ASCII_EURUSD_M1_2015.csv
+    python cli.py history --trim EURUSD
+
+`--trim` keeps the last 180 days at true M1 and downsamples everything older to
+M5 (`--keep-m1-days`, `--coarse`). This is lossy and it says so: sub-M5 detail
+in the deep past is gone for good. What it does not cost you is timeframes -
+H1, H4 and D1 still resample cleanly across the entire span, because those
+buckets are whole multiples of M5. Only a backtest that needs M1 entries from
+five years ago is affected, and nothing in the sweep path does.
+
+## Is ten years enough to evolve strategies?
+
+Yes, comfortably, and the constraint is the opposite of what it looks like.
+
+| timeframe | bars in 10y | trades at 1 per 20 bars | walk-forward folds of 60 trades |
+|---|---:|---:|---:|
+| M15 | 241,920 | 12,096 | 201 |
+| H1 | 60,480 | 3,024 | 50 |
+| H4 | 15,120 | 756 | 12 |
+| D1 | 2,520 | 126 | 2 |
+
+The promotion gate wants 12+ trades and the survival screen wants 60+. On H1 a
+decade gives ~3,000 trades, which is fifty independent walk-forward folds - far
+more than enough to tell an edge from luck. A default sweep only reads 2,500
+bars per timeframe anyway (26 days at M15, 104 at H1), so most of the archive
+exists to answer a different question: did this survive 2015's franc shock,
+2016's Brexit gap, 2020's COVID crash, 2022's hiking cycle?
+
+That is why the risk here is overfitting, not data scarcity. More history makes
+it easier to find a strategy that fits the past beautifully and dies live. The
+defence is the screen, not the sample: `survival_score` ignores total return,
+walk-forward robustness is required for promotion, and live drift is compared
+against the backtest expectancy so a decayed edge gets quarantined
+automatically. Give the search more data and more parameters and it will happily
+manufacture a PF of 3.4 that fails on the first out-of-sample fold - the
+`overfit_monster` case in the test suite is exactly that, and it is rejected.
+
+D1 is the one honest exception: 126 trades a decade is thin, so treat daily
+strategies as suggestive and weight the H1/H4 evidence more heavily.
+
+## Bars or ticks?
 
 **Export M1 bars. Skip ticks** unless you are scalping with stops tighter than
 one minute's range.
@@ -560,7 +616,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          741 checks, all passing
+tests/test_firm.py          761 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -568,7 +624,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 741 passed, 0 failed
+python tests/test_firm.py            # 761 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

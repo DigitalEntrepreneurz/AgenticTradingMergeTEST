@@ -493,6 +493,49 @@ def cmd_history(args) -> None:
         print("  span many minutes, so bar data resolves them.")
         return
 
+    if args.plan:
+        syms = args.plan
+        budget = args.budget_mb
+        pl = H.tiered_plan(len(syms), budget_mb=budget)
+        used = sum(r["size_mb"] for r in H.stored_symbols())
+        print(f"Storage plan for {len(syms)} symbol(s): {', '.join(syms)}\n")
+        print(f"  full M1, 10 years, gzipped : {pl['full_m1_mb']:>7.0f} MB")
+        print(f"  tiered (recommended)       : {pl['estimated_mb']:>7.1f} MB")
+        print(f"  already stored             : {used:>7.1f} MB")
+        print(f"  budget                     : {budget:>7.0f} MB\n")
+        print("  tiered = M1 for the last 180 days, M5 for the 2 years before,")
+        print("           M15 beyond that. H1/H4/D1 stay derivable across the")
+        print("           whole span; only sub-M5 detail is lost in the deep past.\n")
+        room = budget - used
+        if pl["full_m1_mb"] <= room * 0.8:
+            print(f"  Verdict: full M1 fits in the {budget:.0f} MB budget. "
+                  "Import it and skip trimming.")
+        elif pl["estimated_mb"] <= room * 0.8:
+            print(f"  Verdict: full M1 does NOT fit ({pl['full_m1_mb']:.0f} MB into "
+                  f"{room:.0f} MB free).")
+            print("           Import one symbol at a time and trim after each:")
+            print(f"             python cli.py history --import-csv {syms[0]} FILE.csv")
+            print(f"             python cli.py history --trim {syms[0]}")
+        else:
+            fit = max(1, int(room / (pl["estimated_mb"] / max(1, len(syms))) * 0.8))
+            print(f"  Verdict: even tiered storage is tight. Budget fits about "
+                  f"{fit} symbol(s).")
+            print("           Drop symbols, shorten --keep-m1-days, or use --coarse M15.")
+        return
+
+    if args.trim:
+        for sym in args.trim:
+            out = H.trim(sym, keep_m1_days=args.keep_m1_days,
+                         coarse_timeframe=args.coarse)
+            if out.get("error"):
+                print(f"{sym}: {out['error']}")
+                continue
+            print(f"{sym}: {out['before']:,} -> {out['after']:,} bars "
+                  f"({out['removed']:,} removed)")
+            if out.get("warning"):
+                print(f"  note: {out['warning']}")
+        return
+
     if args.resample:
         sym, tf = args.resample
         m1 = H.load_m1(sym)
@@ -915,6 +958,16 @@ def main() -> None:
                     help="import a broker/HistData M1 CSV")
     hi.add_argument("--tz-offset", type=float, default=0.0,
                     help="hours to subtract from CSV timestamps to reach UTC")
+    hi.add_argument("--plan", nargs="+", metavar="SYMBOL",
+                    help="estimate disk use before importing anything")
+    hi.add_argument("--budget-mb", type=float, default=100.0,
+                    help="disk budget for history (workspace snapshots cap ~128MB)")
+    hi.add_argument("--trim", nargs="+", metavar="SYMBOL",
+                    help="keep recent M1, downsample older bars to save space")
+    hi.add_argument("--keep-m1-days", type=int, default=180,
+                    help="how much recent M1 to preserve when trimming")
+    hi.add_argument("--coarse", default="M5",
+                    help="timeframe to downsample older bars to (default M5)")
     hi.add_argument("--from-ticks", nargs=2, metavar=("SYMBOL", "FILE"),
                     help="build M1 from a tick CSV (then the ticks are redundant)")
     hi.add_argument("--check-ticks", metavar="SYMBOL",

@@ -1398,6 +1398,82 @@ def t_ticks_to_bars():
           ambiguous_fraction([Bar(time=0, open=1, high=1, low=1, close=1)])["total"] == 0)
 
 
+def t_history_budget():
+    """Gzip storage, the tiered plan, and lossy trimming."""
+    import gzip as _gz
+    import random
+    from firm import history as H
+    from firm.brokers.base import Bar
+
+    # --- gzip round trip -------------------------------------------------
+    old_dir = H.DATA_DIR
+    H.DATA_DIR = Path(tempfile.mkdtemp()) / "hist"
+    try:
+        rng = random.Random(7)
+        base, px, bars = 1_600_000_000, 1.1, []
+        for i in range(20000):
+            o = px; px += rng.gauss(0, 0.0001)
+            bars.append(Bar(time=base + i * 60, open=o, high=max(o, px) + 1e-5,
+                            low=min(o, px) - 1e-5, close=px, volume=rng.randint(1, 99)))
+        p_out = H.save_m1("GZTEST", bars)
+        check("new writes are gzipped", p_out.suffix == ".gz")
+        with _gz.open(p_out, "rt") as fh:
+            check("gzip file is readable text", fh.readline().startswith("time"))
+        back = H.load_m1("GZTEST")
+        check("gzip round trip keeps bar count", len(back) == len(bars))
+        check("gzip round trip keeps first time", back[0].time == bars[0].time)
+        check("gzip round trip keeps last close",
+              abs(back[-1].close - bars[-1].close) < 1e-9)
+        ratio = (len(bars) * 47) / p_out.stat().st_size
+        check("gzip beats plain csv by 2x+", ratio > 2.0)
+
+        # plain .csv already on disk is still honoured
+        plain = H.DATA_DIR / "OLDSYM_M1.csv"
+        plain.write_text("time,open,high,low,close,volume\n"
+                         "1600000000,1.1,1.2,1.0,1.15,5\n")
+        check("pre-existing plain csv still loads", len(H.load_m1("OLDSYM")) == 1)
+        check("_path prefers the existing plain file",
+              H._path("OLDSYM").suffix == ".csv")
+
+        # --- trim ---------------------------------------------------------
+        long_bars = []
+        px = 1.1
+        start = 1_600_000_000 - 400 * 86400
+        for i in range(400 * 1440):
+            o = px; px += rng.gauss(0, 0.00008)
+            long_bars.append(Bar(time=start + i * 60, open=o, high=max(o, px),
+                                 low=min(o, px), close=px, volume=1))
+        H.save_m1("TRIMSYM", long_bars)
+        h1_before = H.resample(H.load_m1("TRIMSYM"), "H1")
+        out = H.trim("TRIMSYM", keep_m1_days=90, coarse_timeframe="M5")
+        after = H.load_m1("TRIMSYM")
+        check("trim reduces bar count", out["after"] < out["before"])
+        check("trim reports what it removed", out["removed"] > 0)
+        check("trim warns that it is lossy", "no longer" in out["warning"])
+        check("trim keeps chronological order",
+              all(after[i].time < after[i + 1].time for i in range(0, len(after) - 1, 977)))
+        h1_after = H.resample(after, "H1")
+        check("H1 still spans the full history after trim",
+              len(h1_after) >= len(h1_before) - 2)
+        check("H1 first timestamp survives trim",
+              h1_after[0].time == h1_before[0].time)
+        check("recent window is still true M1",
+              (after[-1].time - after[-2].time) == 60)
+        check("trim on unknown symbol reports an error",
+              "error" in H.trim("NOPE_NOT_HERE"))
+    finally:
+        H.DATA_DIR = old_dir
+
+    # --- tiered plan ------------------------------------------------------
+    pl = H.tiered_plan(4, budget_mb=100.0)
+    check("tiered plan is far smaller than full M1",
+          pl["estimated_mb"] < pl["full_m1_mb"] / 4)
+    check("tiered plan for 4 symbols fits 100MB", pl["fits"] is True)
+    check("tiered plan scales with symbol count",
+          H.tiered_plan(8)["bars_total"] == 2 * H.tiered_plan(4)["bars_total"])
+    check("a huge symbol count stops fitting", H.tiered_plan(60)["fits"] is False)
+
+
 def t_history_resample():
     print("\n[M1 history -> every timeframe]")
     import random as _random
@@ -2201,7 +2277,8 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_ticks_to_bars, t_history_resample, t_survival_screen, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_ticks_to_bars, t_history_budget,
+    t_history_resample, t_survival_screen, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

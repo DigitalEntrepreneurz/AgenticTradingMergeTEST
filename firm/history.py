@@ -27,6 +27,7 @@ believe a sub-minute-precision result.
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import time
 from pathlib import Path
@@ -105,6 +106,66 @@ def coverage(bars: list[Bar], timeframe: str = "M1") -> dict:
     }
 
 
+# ---------------------------------------------------------------- budget
+def tiered_plan(symbols: int = 4, budget_mb: float = 100.0,
+                bytes_per_bar: float = 13.0) -> dict:
+    """Fit history into a disk budget by degrading resolution with age.
+
+    Full M1 for ten years is ~42 MB per symbol even gzipped, so a handful of
+    pairs will not fit in a small workspace. But nothing needs M1 that far
+    back: a sweep reads 2,500 bars per timeframe, which is ~3 months at M15
+    and ~1.7 years at H4. Recent data must be fine-grained because that is
+    what live drift is compared against; old data only has to be good enough
+    to prove a strategy survived a different regime.
+
+    So: M1 for the recent window, M5 beyond it, M15 for the deep past.
+    """
+    recent_days, mid_days = 180, 730
+    per_sym = {
+        "M1_recent": recent_days * 1440,
+        "M5_mid": mid_days * 288,
+        "M15_deep": (3650 - mid_days - recent_days) * 96,
+    }
+    total_bars = sum(per_sym.values()) * symbols
+    mb = total_bars * bytes_per_bar / 1e6
+    return {
+        "symbols": symbols, "budget_mb": budget_mb,
+        "layers": per_sym, "bars_total": total_bars,
+        "estimated_mb": round(mb, 1),
+        "fits": mb <= budget_mb,
+        "full_m1_mb": round(3650 * 1440 * symbols * bytes_per_bar / 1e6, 1),
+    }
+
+
+def trim(symbol: str, keep_m1_days: int = 180,
+         coarse_timeframe: str = "M5") -> dict:
+    """Shrink stored history: keep recent M1, downsample everything older.
+
+    Returns what changed. This is lossy by design and says so - the old bars
+    are gone, not archived.
+    """
+    bars = load_m1(symbol)
+    if not bars:
+        return {"symbol": symbol, "error": "no stored history"}
+    before = len(bars)
+    cutoff = bars[-1].time - keep_m1_days * 86400
+    recent = [b for b in bars if b.time >= cutoff]
+    old = [b for b in bars if b.time < cutoff]
+    if not old:
+        return {"symbol": symbol, "before": before, "after": before,
+                "note": "nothing older than the M1 window"}
+    coarse = resample(old, coarse_timeframe)
+    merged = coarse + recent
+    merged.sort(key=lambda b: b.time)
+    _write(symbol, merged)
+    return {"symbol": symbol, "before": before, "after": len(merged),
+            "m1_kept_days": keep_m1_days, "old_downsampled_to": coarse_timeframe,
+            "removed": before - len(merged),
+            "warning": (f"bars older than {keep_m1_days} days are now "
+                        f"{coarse_timeframe}; timeframes finer than that can no "
+                        "longer be derived for that period")}
+
+
 # ---------------------------------------------------------------- ticks
 def ticks_to_m1(rows: Iterable[tuple[float, float]]) -> list[Bar]:
     """Aggregate (epoch_seconds, price) pairs into M1 bars.
@@ -163,8 +224,38 @@ def ambiguous_fraction(bars: list[Bar], stop_frac: float = 0.4) -> dict:
 
 
 # ---------------------------------------------------------------- storage
-def _path(symbol: str) -> Path:
-    return DATA_DIR / f"{symbol.upper()}_M1.csv"
+def _path(symbol: str, gz: bool | None = None) -> Path:
+    """Storage path. Prefers whichever file already exists, else gzip."""
+    plain = DATA_DIR / f"{symbol.upper()}_M1.csv"
+    packed = DATA_DIR / f"{symbol.upper()}_M1.csv.gz"
+    if gz is True:
+        return packed
+    if gz is False:
+        return plain
+    if packed.exists():
+        return packed
+    if plain.exists():
+        return plain
+    return packed          # new data is written compressed
+
+
+def _open(path: Path, mode: str):
+    """Open plain or gzipped CSV transparently. ~4x smaller for M1."""
+    if str(path).endswith(".gz"):
+        return gzip.open(path, mode + "t", newline="", encoding="utf-8")
+    return path.open(mode, newline="")
+
+
+def _write(symbol: str, bars: list[Bar]) -> Path:
+    """Overwrite stored history with exactly these bars (no merge)."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    p = _path(symbol)
+    with _open(p, "w") as fh:
+        w = csv.writer(fh)
+        w.writerow(["time", "open", "high", "low", "close", "volume"])
+        for b in bars:
+            w.writerow([int(b.time), b.open, b.high, b.low, b.close, b.volume])
+    return p
 
 
 def save_m1(symbol: str, bars: list[Bar]) -> Path:
@@ -175,7 +266,7 @@ def save_m1(symbol: str, bars: list[Bar]) -> Path:
         existing[int(b.time)] = b
     merged = [existing[k] for k in sorted(existing)]
     p = _path(symbol)
-    with p.open("w", newline="") as fh:
+    with _open(p, "w") as fh:
         w = csv.writer(fh)
         w.writerow(["time", "open", "high", "low", "close", "volume"])
         for b in merged:
@@ -188,7 +279,7 @@ def load_m1(symbol: str) -> list[Bar]:
     if not p.exists():
         return []
     out: list[Bar] = []
-    with p.open(newline="") as fh:
+    with _open(p, "r") as fh:
         for row in csv.DictReader(fh):
             try:
                 out.append(Bar(time=float(row["time"]), open=float(row["open"]),

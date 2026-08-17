@@ -105,6 +105,63 @@ def coverage(bars: list[Bar], timeframe: str = "M1") -> dict:
     }
 
 
+# ---------------------------------------------------------------- ticks
+def ticks_to_m1(rows: Iterable[tuple[float, float]]) -> list[Bar]:
+    """Aggregate (epoch_seconds, price) pairs into M1 bars.
+
+    Use this to build M1 from a tick export once, then throw the ticks away:
+    every timeframe the firm tests on is derived from M1, and M1 resolves
+    essentially all stop-vs-target ambiguity for ATR-sized stops.
+    """
+    out: list[Bar] = []
+    cur: int | None = None
+    o = h = l = c = 0.0
+    n = 0
+    for t, price in rows:
+        k = int(t) // 60 * 60
+        if cur is None:
+            cur, o, h, l, c, n = k, price, price, price, price, 1
+        elif k != cur:
+            out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c, volume=n))
+            cur, o, h, l, c, n = k, price, price, price, price, 1
+        else:
+            h = max(h, price)
+            l = min(l, price)
+            c = price
+            n += 1
+    if cur is not None:
+        out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c, volume=n))
+    return out
+
+
+def ambiguous_fraction(bars: list[Bar], stop_frac: float = 0.4) -> dict:
+    """How often a bar could have hit both a stop and a target.
+
+    This is the only thing higher-resolution data buys you. Run it on your own
+    M1 with your own stop sizing before paying for ticks: if the number is
+    small, ticks are storage you will never read.
+    """
+    amb = res = 0
+    for b in bars:
+        span = b.high - b.low
+        if span <= 0:
+            continue
+        e = b.open
+        sl, tp = e - stop_frac * span, e + stop_frac * span
+        hit_sl, hit_tp = b.low <= sl, b.high >= tp
+        if hit_sl and hit_tp:
+            amb += 1
+        elif hit_sl or hit_tp:
+            res += 1
+    total = amb + res
+    return {"ambiguous": amb, "resolved": res, "total": total,
+            "pct": round(amb / total * 100, 2) if total else 0.0,
+            "stop_frac": stop_frac,
+            "verdict": ("ticks would materially change results"
+                        if total and amb / total > 0.10 else
+                        "bar data is sufficient at this stop size")}
+
+
 # ---------------------------------------------------------------- storage
 def _path(symbol: str) -> Path:
     return DATA_DIR / f"{symbol.upper()}_M1.csv"

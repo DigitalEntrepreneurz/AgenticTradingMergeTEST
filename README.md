@@ -91,6 +91,43 @@ costs one download rather than three.
 So: yes, ten years of M1 is enough, and it is the right way to do it. Just do
 not trust a result that depends on sub-minute precision.
 
+### Bars or ticks?
+
+**Export M1 bars. Skip ticks** unless you are scalping with stops tighter than
+one minute's range.
+
+Ticks buy you exactly one thing: knowing whether the high or the low came first
+inside a candle, which only matters when a trade's stop *and* target both sit
+inside that candle. Measured on 30 days of synthetic tick data, for trades sized
+to a fraction of each H1 bar's range:
+
+| stop/target size | ambiguous at H1 | resolved by M1 | still needs ticks |
+|---|---:|---:|---:|
+| 0.25x bar range | 46.5% | **100%** | 0.00% |
+| 0.40x bar range | 17.9% | **100%** | 0.00% |
+
+M1 resolved *every* ambiguous H1 bar. This firm's strategies use ATR-sized
+stops (`atr_mult` 1.6-2.0, with a hard floor of 1.0x ATR in the risk gate),
+which span many minutes - so bar data settles them.
+
+The storage difference is not small:
+
+| data | 10 years, 1 symbol | size |
+|---|---:|---:|
+| M1 bars | 3.6M rows | ~180 MB |
+| ticks @ 5/s | 1.1B rows | ~43 GB |
+
+If you already have a tick export, convert it once and keep the M1:
+
+```bash
+python cli.py history --from-ticks EURUSD ticks.csv   # -> M1, ticks now redundant
+python cli.py history --check-ticks EURUSD            # measure it on YOUR data
+```
+
+`--check-ticks` reports the ambiguous fraction at three stop sizes and tells you
+plainly whether ticks would change your results. Run it before spending a
+weekend on a 43 GB download.
+
 ## Bulk testing for survival, not for return
 
 ```bash
@@ -523,7 +560,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          728 checks, all passing
+tests/test_firm.py          741 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -531,7 +568,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 728 passed, 0 failed
+python tests/test_firm.py            # 741 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

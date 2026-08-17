@@ -1336,6 +1336,68 @@ def t_indicator_compiler():
 
 
 
+def t_ticks_to_bars():
+    print("\n[ticks -> M1, and whether ticks are worth keeping]")
+    from firm.brokers.base import Bar
+    from firm.history import ambiguous_fraction, resample, ticks_to_m1
+
+    rows = [(0, 1.10), (10, 1.101), (30, 1.099), (70, 1.102), (80, 1.103)]
+    bars = ticks_to_m1(rows)
+    check("ticks group into one bar per minute", len(bars) == 2)
+    check("bar open is the first tick", bars[0].open == 1.10)
+    check("bar high is the max tick", bars[0].high == 1.101)
+    check("bar low is the min tick", bars[0].low == 1.099)
+    check("bar close is the last tick of the minute", bars[0].close == 1.099)
+    check("tick count is stored as volume", bars[0].volume == 3)
+    check("an empty tick stream is safe", ticks_to_m1([]) == [])
+
+    # A tick stream aggregated to M1 then resampled to H1 must equal the same
+    # ticks aggregated straight to H1 - proving the two-step path loses nothing.
+    import random as _random
+    rng = _random.Random(5)
+    start = 1_700_000_000 - (1_700_000_000 % 3600)
+    price = 1.10
+    stream = []
+    for sec in range(3600 * 6):
+        price += rng.gauss(0, 0.00002)
+        stream.append((start + sec, price))
+
+    def direct(seconds):
+        out, cur, o, h, l, c = [], None, 0, 0, 0, 0
+        for t, pr in stream:
+            k = int(t) // seconds * seconds
+            if cur is None:
+                cur, o, h, l, c = k, pr, pr, pr, pr
+            elif k != cur:
+                out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c))
+                cur, o, h, l, c = k, pr, pr, pr, pr
+            else:
+                h, l, c = max(h, pr), min(l, pr), pr
+        out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c))
+        return out
+
+    two_step = resample(ticks_to_m1(stream), "H1")
+    one_step = direct(3600)
+    check("ticks -> M1 -> H1 equals ticks -> H1",
+          len(two_step) == len(one_step) and all(
+              a.time == b.time and abs(a.open - b.open) < 1e-12
+              and abs(a.high - b.high) < 1e-12 and abs(a.low - b.low) < 1e-12
+              and abs(a.close - b.close) < 1e-12
+              for a, b in zip(two_step, one_step)))
+
+    # the ambiguity meter: wide stops are unambiguous, hair-thin ones are not
+    m1 = ticks_to_m1(stream)
+    wide = ambiguous_fraction(m1, 0.5)
+    tight = ambiguous_fraction(m1, 0.2)
+    check("a wide stop is rarely ambiguous inside one candle", wide["pct"] < 5.0)
+    check("a hair-thin stop is often ambiguous", tight["pct"] > wide["pct"])
+    check("the meter gives a plain verdict", "sufficient" in wide["verdict"])
+    check("the meter counts what it measured",
+          wide["total"] == wide["ambiguous"] + wide["resolved"])
+    check("a flat series cannot be ambiguous",
+          ambiguous_fraction([Bar(time=0, open=1, high=1, low=1, close=1)])["total"] == 0)
+
+
 def t_history_resample():
     print("\n[M1 history -> every timeframe]")
     import random as _random
@@ -2139,7 +2201,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_history_resample, t_survival_screen, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_ticks_to_bars, t_history_resample, t_survival_screen, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

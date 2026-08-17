@@ -441,6 +441,58 @@ def cmd_history(args) -> None:
                   f"completeness {out.get('completeness', 0)}%")
         return
 
+    if args.from_ticks:
+        sym, path = args.from_ticks
+        import csv as _csv
+        rows = []
+        bad = 0
+        with open(path, newline="") as fh:
+            sample = fh.read(4096)
+            fh.seek(0)
+            delim = ";" if sample.count(";") > sample.count(",") else ","
+            rdr = _csv.reader(fh, delimiter=delim)
+            if any(ch.isalpha() for ch in sample.split("\n")[0].replace("T", "")):
+                next(rdr, None)
+            for row in rdr:
+                try:
+                    ts = row[0].strip()
+                    t = float(ts) if H._is_number(ts) else H._to_epoch(ts)
+                    nums = [float(x) for x in row[1:4] if H._is_number(x)]
+                    if not nums:
+                        raise ValueError
+                    # bid/ask -> mid when both present, else the single price
+                    price = (nums[0] + nums[1]) / 2 if len(nums) >= 2 else nums[0]
+                    rows.append((t - args.tz_offset * 3600, price))
+                except (ValueError, IndexError):
+                    bad += 1
+        bars = H.ticks_to_m1(rows)
+        if bars:
+            H.save_m1(sym, bars)
+        cov = H.coverage(bars, "M1")
+        print(f"{sym.upper()}: {len(rows):,} ticks -> {len(bars):,} M1 bars "
+              f"({bad} unparseable rows)")
+        print(f"  span {cov['days']:.0f} days, completeness {cov['completeness']}%")
+        print("  ticks are now redundant: every timeframe derives from this M1.")
+        return
+
+    if args.check_ticks:
+        sym = args.check_ticks
+        m1 = H.load_m1(sym)
+        if not m1:
+            print(f"no stored M1 for {sym}")
+            return
+        print(f"{sym}: would tick data change your backtests?\n")
+        print(f"  {'stop size':28} {'ambiguous':>10} {'verdict'}")
+        for frac, label in ((0.25, "very tight (0.25x M1 range)"),
+                            (0.40, "tight (0.40x M1 range)"),
+                            (0.50, "normal (0.50x M1 range)")):
+            a = H.ambiguous_fraction(m1, frac)
+            print(f"  {label:28} {a['pct']:>9.2f}% {a['verdict']}")
+        print("\n  Ambiguity only matters when a stop AND target sit inside one")
+        print("  M1 candle. ATR-sized stops (this firm's default is 1.6-2.0x ATR)")
+        print("  span many minutes, so bar data resolves them.")
+        return
+
     if args.resample:
         sym, tf = args.resample
         m1 = H.load_m1(sym)
@@ -863,6 +915,10 @@ def main() -> None:
                     help="import a broker/HistData M1 CSV")
     hi.add_argument("--tz-offset", type=float, default=0.0,
                     help="hours to subtract from CSV timestamps to reach UTC")
+    hi.add_argument("--from-ticks", nargs=2, metavar=("SYMBOL", "FILE"),
+                    help="build M1 from a tick CSV (then the ticks are redundant)")
+    hi.add_argument("--check-ticks", metavar="SYMBOL",
+                    help="measure whether tick data would change your results")
     hi.add_argument("--resample", nargs=2, metavar=("SYMBOL", "TIMEFRAME"),
                     help="preview a derived timeframe")
     hi.set_defaults(fn=cmd_history)

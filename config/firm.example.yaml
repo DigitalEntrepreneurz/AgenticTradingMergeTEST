@@ -139,6 +139,11 @@ llm:
   # models at Claude Sonnet rates, invents spend that never happened, and
   # trips max_daily_usd - shutting itself down while costing you nothing.
   free_tier: false
+  # ---- multi-pool routing ---------------------------------------------
+  # A free/aggregator key is many small per-model budgets, not one big pool.
+  # With routing on, each agent picks the best model whose pool still has room
+  # and hands off when one empties. See firm/router.py for the pools/order.
+  routing: false
   # Real limits on a free plan are tokens, not dollars. 0 = no limit.
   max_tokens_per_day: 0
   monthly_token_quota: 0

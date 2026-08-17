@@ -1336,6 +1336,79 @@ def t_indicator_compiler():
 
 
 
+def t_model_routing():
+    print("\n[multi-pool model routing]")
+    from firm import router as R
+
+    check("every routed model has a declared pool",
+          all(m in R.POOLS for role in R.ROUTES for m in R.ROUTES[role]))
+    check("hungry roles are routed to large pools first",
+          R.pool_for(R.ROUTES["execution"][0]) >= 90_000_000)
+    check("pools are expressed in tokens, not millions",
+          R.pool_for("mistral-large-3") == 99_500_000)
+    check("unmetered models report infinite headroom",
+          R.remaining(tmp_mem(), "big-pickle") == float("inf"))
+
+    m = tmp_mem()
+    first, why = R.pick(m, "execution")
+    check("a fresh month picks the top preference", first == R.ROUTES["execution"][0])
+    check("the reason states remaining headroom", "left" in why)
+
+    # failover
+    m.add_cost("execution", first, 95_000_000, 0, 0.0)
+    second, _ = R.pick(m, "execution")
+    check("an exhausted pool is skipped", second != first)
+    check("failover stays inside the role's list", second in R.ROUTES["execution"])
+
+    # exhaustion is reported, never guessed
+    for cand in R.candidates("execution"):
+        cap = R.pool_for(cand)
+        if cap:
+            m.add_cost("execution", cand, int(cap), 0, 0.0)
+    mod, why = R.pick(m, "execution")
+    check("a fully drained tier returns no model", mod == "")
+    check("the exhaustion message names the role", "execution" in why)
+
+    # safety margin
+    m2 = tmp_mem()
+    cap = R.pool_for("mistral-large-3")
+    m2.add_cost("ceo", "mistral-large-3", int(cap * 0.96), 0, 0.0)
+    check("a pool is retired at the safety fraction, not at 100%",
+          R.remaining(m2, "mistral-large-3") == 0.0)
+
+    # accounting
+    m3 = tmp_mem()
+    m3.add_cost("risk", "mistral-medium-3.5", 1_000, 500, 0.0)
+    check("usage is tracked per model",
+          R.usage_by_model(m3).get("mistral-medium-3.5") == 1_500)
+    st = R.status(m3)
+    check("status reports every pool", len(st["models"]) == len(R.POOLS))
+    check("status explains the pools are separate", "not one shared" in st["note"])
+    check("status exposes the role table", "execution" in st["roles"])
+
+    # exclusion (a model that just errored)
+    m4 = tmp_mem()
+    alt, _ = R.pick(m4, "risk", exclude={R.ROUTES["risk"][0]})
+    check("a failing model can be excluded", alt == R.ROUTES["risk"][1])
+
+    # integration: the agent path honours routing and reports exhaustion
+    from firm.orchestrator import Firm
+    f = Firm(memory=tmp_mem(), connect=False)
+    f.cfg.raw.setdefault("llm", {})["routing"] = True
+    for cand in R.candidates("research"):
+        cap = R.pool_for(cand)
+        if cap:
+            f.memory.add_cost("research", cand, int(cap), 0, 0.0)
+    r = f.agents["research"].think("s", "p")
+    check("an agent with no pool left does not pretend to have called an LLM",
+          not r.used_llm)
+    check("the agent surfaces the exhaustion reason", "exhausted" in (r.error or ""))
+
+    # routing off = original behaviour
+    f2 = Firm(memory=tmp_mem(), connect=False)
+    check("routing is opt-in", not f2.cfg.get("llm.routing", False))
+
+
 def t_free_tier_quota():
     print("\n[free tier + token quotas]")
     from firm.llm import LLM, price_for
@@ -1856,7 +1929,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

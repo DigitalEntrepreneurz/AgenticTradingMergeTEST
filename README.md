@@ -119,8 +119,32 @@ configured models are unpriced and `free_tier` is still off - that is the one
 misconfiguration that silently halts a working firm.
 
 For scale: at the default cadences the firm draws roughly **105M tokens/month**
-(execution and risk review every 5 min dominate). Against a 1.2B/month quota
-that is about **9%**, or 11x headroom.
+(execution and risk review every 5 min dominate).
+
+### Aggregator keys are many pools, not one
+
+A headline like "1.1B remaining" on a multi-model key is usually the **sum of
+independent per-model budgets** - 33 pools whose largest is 99.5M and whose
+smallest is 2M. An agent pinned to one model does not get 1.1B tokens, it gets
+that model's pool. Execution and risk each draw ~48M/month, so pinned to a 3M
+model they die in **under two days** while the dashboard still shows a billion
+tokens free.
+
+```yaml
+llm:
+  free_tier: true
+  routing: true      # pick per call from a role's preference list
+```
+
+`firm/router.py` holds the pool sizes and the per-role preference order:
+hungry, high-frequency roles (execution, risk) sit on the 99.5M pools;
+reasoning-heavy roles get the strongest models; code-shaped work goes to
+Devstral/Codestral. A pool is retired at **95%** to leave month-end headroom,
+and when every model for a role is spent the agent says so and falls back to
+the deterministic engine rather than silently degrading.
+
+`python cli.py preflight` prints the live role-to-model map with remaining
+headroom, and warns when routing is off on a multi-pool key.
 
 ## Connecting MT4 and MT5
 
@@ -372,7 +396,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          663 checks, all passing
+tests/test_firm.py          682 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -380,7 +404,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 663 passed, 0 failed
+python tests/test_firm.py            # 682 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

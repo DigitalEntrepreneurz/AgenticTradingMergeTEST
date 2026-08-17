@@ -73,12 +73,35 @@ class Agent:
 
     def think(self, system: str, prompt: str, max_tokens: int = 1200,
               temperature: float = 0.3) -> LLMReply:
-        """LLM call gated by this agent's own daily budget."""
+        """LLM call gated by this agent's own daily budget.
+
+        When `llm.routing` is on, the model is chosen per call from this
+        agent's preference list, skipping pools that are spent. On a
+        multi-pool key an agent pinned to one model dies with that model's
+        quota, which is a silent failure - routing turns that into a
+        transparent hand-off to the next model.
+        """
         if not self.within_budget():
             return LLMReply(text="", model=self.model, used_llm=False,
                             error=f"{self.name} daily budget "
                                   f"${self.daily_budget:.2f} exhausted")
-        return self.llm.ask(self.name, self.model, system, prompt, max_tokens, temperature)
+
+        model = self.model
+        if self.cfg.get("llm.routing", False):
+            try:
+                from ..router import pick
+                chosen, why = pick(self.mem, self.name, need=max_tokens * 3)
+                if not chosen:
+                    # every pool for this role is empty: say so, fall back
+                    return LLMReply(text="", model=self.model, used_llm=False,
+                                    error=why)
+                if chosen != model:
+                    self.log(f"routed to {why}", "info")
+                model = chosen
+            except Exception as e:            # routing must never block work
+                self.log(f"model routing unavailable: {e}", "warn")
+
+        return self.llm.ask(self.name, model, system, prompt, max_tokens, temperature)
 
     # ---- editable instructions -----------------------------------------
     @property

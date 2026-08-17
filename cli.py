@@ -469,6 +469,26 @@ def cmd_preflight(args) -> None:
         else:
             caution("free_tier is on but no token quota is set - nothing caps "
                     "usage if the plan runs out")
+        if cfg.get("llm.routing", False):
+            from firm import router as _R
+            good("multi-pool routing on - agents fail over when a pool empties")
+            print("        role -> model (headroom this month):")
+            for role in ("execution", "risk", "ceo", "research", "backtest",
+                         "scout", "cost_optimizer"):
+                mod, why = _R.pick(mem, role)
+                if mod:
+                    print(f"          {role:15} {why}")
+                else:
+                    fail(f"{role}: {why}")
+            hot = [r for r in _R.status(mem)["models"]
+                   if r["metered"] and r["pct_used"] > 80]
+            if hot:
+                caution("pools past 80%: " + ", ".join(
+                    f"{r['model']} {r['pct_used']:.0f}%" for r in hot))
+        else:
+            caution("llm.routing is off - each agent is pinned to one model and "
+                    "stops when that model's pool empties, even with tokens left "
+                    "elsewhere. Set llm.routing: true for an aggregator key")
         used_m, used_d = mem.tokens_this_month(), mem.tokens_today()
         print(f"        tokens used: {used_d:,} today / {used_m:,} this month")
         if mon_tok:

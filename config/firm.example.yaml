@@ -133,6 +133,15 @@ llm:
   fallback_to_heuristics: true
   # Spend cap. Models ending in ":free" are priced at $0.
   max_daily_usd: 2.0    # hard firm-wide ceiling across ALL agents
+  # ---- free / flat-rate endpoints -------------------------------------
+  # Set free_tier when your endpoint does not bill per token (a free gateway,
+  # a subscription, or a local model). Without it the firm prices unknown
+  # models at Claude Sonnet rates, invents spend that never happened, and
+  # trips max_daily_usd - shutting itself down while costing you nothing.
+  free_tier: false
+  # Real limits on a free plan are tokens, not dollars. 0 = no limit.
+  max_tokens_per_day: 0
+  monthly_token_quota: 0
 
 # How the firm supervises itself. Promotion to `approved` was always automatic;
 # these keys govern the reverse - pulling a strategy that has stopped working.

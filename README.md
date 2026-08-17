@@ -94,6 +94,34 @@ rendered on the dashboard. Every provider error is passed through `redact()`
 first, which masks the configured key and any key-shaped token it has never
 seen. This is tested against a server that deliberately echoes the header back.
 
+### Running on a free or flat-rate endpoint
+
+If your key is a free gateway, a subscription, or a local model, the endpoint
+does not bill per token - but the firm does not know that. `price_for()` falls
+back to Claude Sonnet rates ($3/$15 per 1M) for any model it does not
+recognise, so a free `llama-3.3-70b` call is booked internally at ~$0.018.
+After roughly 111 calls the firm would hit `max_daily_usd` and shut itself
+down over spend that never happened.
+
+Set the flag:
+
+```yaml
+llm:
+  free_tier: true                    # cost is $0; skip the dollar ceilings
+  max_tokens_per_day:    40000000    # the limits that are actually real
+  monthly_token_quota: 1200000000    # 0 = unlimited
+```
+
+With `free_tier: true` the dollar ceiling is bypassed entirely and quota is
+enforced in **tokens**, against the calendar month (matching how providers
+reset), not a rolling 30-day window. `python cli.py preflight` warns when your
+configured models are unpriced and `free_tier` is still off - that is the one
+misconfiguration that silently halts a working firm.
+
+For scale: at the default cadences the firm draws roughly **105M tokens/month**
+(execution and risk review every 5 min dominate). Against a 1.2B/month quota
+that is about **9%**, or 11x headroom.
+
 ## Connecting MT4 and MT5
 
 Three back ends, chosen per account in `config/firm.yaml`:
@@ -344,7 +372,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          642 checks, all passing
+tests/test_firm.py          663 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -352,7 +380,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 642 passed, 0 failed
+python tests/test_firm.py            # 663 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

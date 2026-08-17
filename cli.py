@@ -357,7 +357,10 @@ def cmd_llm(args) -> None:
     proto, default_url, env_var = PROVIDERS.get(prov, PROVIDERS["anthropic"])
     llm = LLM(api_key=cfg.llm_key, provider=prov, base_url=cfg.llm_base_url,
               model_prefix=cfg.llm_model_prefix,
-              max_daily_usd=float(cfg.get("llm.max_daily_usd", 10.0)))
+              max_daily_usd=float(cfg.get("llm.max_daily_usd", 10.0)),
+              free_tier=bool(cfg.get("llm.free_tier", False)),
+              max_tokens_per_day=int(cfg.get("llm.max_tokens_per_day", 0) or 0),
+              monthly_token_quota=int(cfg.get("llm.monthly_token_quota", 0) or 0))
 
     key = cfg.llm_key
     masked = f"{key[:6]}...{key[-4:]} ({len(key)} chars)" if key else "(none)"
@@ -455,14 +458,42 @@ def cmd_preflight(args) -> None:
                     for a in agents.values() if (a or {}).get("enabled", True))
     mem = Memory()
     spent = mem.cost_today()
-    good(f"firm-wide ceiling ${cap:.2f}/day (enforced in LLM.available)")
-    if per_agent > cap:
-        good(f"per-agent budgets total ${per_agent:.2f} but the ${cap:.2f} "
-             "ceiling binds first")
+    free_tier = bool(cfg.get("llm.free_tier", False))
+    day_tok = int(cfg.get("llm.max_tokens_per_day", 0) or 0)
+    mon_tok = int(cfg.get("llm.monthly_token_quota", 0) or 0)
+
+    if free_tier:
+        good("free_tier on - tokens are metered, dollar ceilings are bypassed")
+        if mon_tok or day_tok:
+            good(f"token quota: {mon_tok:,}/month, {day_tok:,}/day (0 = unlimited)")
+        else:
+            caution("free_tier is on but no token quota is set - nothing caps "
+                    "usage if the plan runs out")
+        used_m, used_d = mem.tokens_this_month(), mem.tokens_today()
+        print(f"        tokens used: {used_d:,} today / {used_m:,} this month")
+        if mon_tok:
+            pct = used_m / mon_tok * 100
+            (caution if pct > 80 else good)(
+                f"{pct:.1f}% of the monthly quota consumed")
     else:
-        caution(f"per-agent budgets total ${per_agent:.2f}, under the ceiling - "
-                "the ceiling will never trigger")
-    print(f"        spent in the last 24h: ${spent:.4f}")
+        good(f"firm-wide ceiling ${cap:.2f}/day (enforced in LLM.available)")
+        if per_agent > cap:
+            good(f"per-agent budgets total ${per_agent:.2f} but the ${cap:.2f} "
+                 "ceiling binds first")
+        else:
+            caution(f"per-agent budgets total ${per_agent:.2f}, under the ceiling - "
+                    "the ceiling will never trigger")
+        print(f"        spent in the last 24h: ${spent:.4f}")
+        model_names = {str((a or {}).get("model", "")) for a in agents.values()}
+        from firm.llm import PRICES
+        unknown = {m for m in model_names if m and not any(
+            m.startswith(k) or k.startswith(m) for k in PRICES)
+            and not m.endswith(":free") and not m.startswith("local/")}
+        if unknown:
+            caution(f"unpriced model(s) {sorted(unknown)} bill at Sonnet rates "
+                    "($3/$15 per 1M) in the firm's own accounting. If your "
+                    "endpoint is free or flat-rate, set llm.free_tier: true or "
+                    "the firm will halt on spend that never happened")
     tick = float(cfg.get("schedule.tick_seconds", 10))
     if tick < 30:
         caution(f"tick_seconds={tick:g} is fast for a paid key; the ceiling protects "

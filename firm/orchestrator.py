@@ -30,6 +30,11 @@ class Firm:
                        model_prefix=self.cfg.llm_model_prefix,
                        memory=self.memory,
                        max_daily_usd=float(self.cfg.get("llm.max_daily_usd", 10.0)),
+                       free_tier=bool(self.cfg.get("llm.free_tier", False)),
+                       max_tokens_per_day=int(
+                           self.cfg.get("llm.max_tokens_per_day", 0) or 0),
+                       monthly_token_quota=int(
+                           self.cfg.get("llm.monthly_token_quota", 0) or 0),
                        enabled=self.cfg.get("llm.provider", "anthropic") != "none")
         self.brokers: dict[str, Any] = build_all(self.cfg) if connect else {}
         self.ctx = AgentContext(cfg=self.cfg, memory=self.memory, llm=self.llm,

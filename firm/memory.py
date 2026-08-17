@@ -5,6 +5,7 @@ and gets better over time. SQLite = zero setup, survives restarts.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 import time
@@ -236,6 +237,30 @@ class Memory:
         cutoff = time.time() - 86400
         r = self.q("SELECT COALESCE(SUM(usd),0) s FROM costs WHERE created_at>?", (cutoff,))
         return float(r[0]["s"])
+
+    def tokens_today(self) -> int:
+        """Total tokens in the last 24h - the real unit on a free/quota plan."""
+        cutoff = time.time() - 86400
+        r = self.q("SELECT COALESCE(SUM(input_tokens+output_tokens),0) t FROM costs"
+                   " WHERE created_at>?", (cutoff,))
+        return int(r[0]["t"])
+
+    def tokens_this_month(self) -> int:
+        """Tokens since the start of the current calendar month (UTC).
+
+        Provider quotas reset on the calendar month, not a rolling window, so
+        this deliberately does not use `now - 30 days`.
+        """
+        now = time.gmtime()
+        start = calendar.timegm((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, 0))
+        r = self.q("SELECT COALESCE(SUM(input_tokens+output_tokens),0) t FROM costs"
+                   " WHERE created_at>=?", (start,))
+        return int(r[0]["t"])
+
+    def token_usage(self) -> dict:
+        """Token counters for the dashboard and the cost agent."""
+        return {"today": self.tokens_today(), "month": self.tokens_this_month(),
+                "usd_today": self.cost_today()}
 
     def cost_by_agent(self) -> list[dict]:
         cutoff = time.time() - 86400

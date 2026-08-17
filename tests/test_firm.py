@@ -1336,6 +1336,76 @@ def t_indicator_compiler():
 
 
 
+def t_free_tier_quota():
+    print("\n[free tier + token quotas]")
+    from firm.llm import LLM, price_for
+
+    # --- pricing ---
+    check("unknown models bill at the expensive tier on a paid endpoint",
+          price_for("llama-3.3-70b-instruct") == (3.00, 15.00))
+    check("free_tier zeroes the price of any model",
+          price_for("llama-3.3-70b-instruct", free_tier=True) == (0.0, 0.0))
+    check("a :free suffix is still free without the flag",
+          price_for("meta/llama-3.3-70b:free") == (0.0, 0.0))
+    check("local models are free", price_for("local/llama3") == (0.0, 0.0))
+    check("known paid models keep their real price",
+          price_for("claude-sonnet-4-5") == (3.00, 15.00))
+    check("free_tier does not corrupt known prices for paid users",
+          price_for("claude-sonnet-4-5", free_tier=False) == (3.00, 15.00))
+
+    url = "http://127.0.0.1:9/v1"
+
+    # --- the dollar ceiling must not shut down a free firm ---
+    m = tmp_mem()
+    free = LLM(api_key="k-1234567890", provider="custom", base_url=url,
+               memory=m, max_daily_usd=2.0, free_tier=True)
+    paid = LLM(api_key="k-1234567890", provider="custom", base_url=url,
+               memory=m, max_daily_usd=2.0)
+    m.add_cost("research", "claude-sonnet-4-5", 1_000_000, 100_000, 4.50)
+    check("a paid firm halts when the dollar ceiling is passed", not paid.available)
+    check("a free firm ignores the dollar ceiling", free.available)
+    check("the paid halt explains itself", "budget" in paid.limit_reason())
+
+    # --- tokens are the real limit ---
+    m2 = tmp_mem()
+    q = LLM(api_key="k-1234567890", provider="custom", base_url=url, memory=m2,
+            free_tier=True, max_tokens_per_day=1_000_000,
+            monthly_token_quota=10_000_000)
+    check("a fresh quota is usable", q.available)
+    m2.add_cost("research", "llama", 900_000, 50_000, 0.0)
+    check("still usable under the daily token cap", q.available)
+    m2.add_cost("research", "llama", 100_000, 0, 0.0)
+    check("the daily token cap stops calls", not q.available)
+    check("the token halt names the cap", "token" in q.limit_reason())
+    r = q.ask("research", "llama", "s", "h")
+    check("a capped call is refused, not attempted",
+          not r.used_llm and "token" in (r.error or ""))
+
+    # --- monthly quota is independent of the daily cap ---
+    m3 = tmp_mem()
+    q3 = LLM(api_key="k-1234567890", provider="custom", base_url=url, memory=m3,
+             free_tier=True, monthly_token_quota=1_000_000)
+    m3.add_cost("research", "llama", 1_100_000, 0, 0.0)
+    check("the monthly quota alone can halt the firm", not q3.available)
+    check("the monthly halt names the quota", "monthly" in q3.limit_reason())
+
+    # --- accounting ---
+    check("tokens_today sums input and output",
+          m3.tokens_today() == 1_100_000)
+    check("tokens_this_month is calendar-based, not rolling",
+          m3.tokens_this_month() == 1_100_000)
+    check("token_usage reports all three counters",
+          set(m3.token_usage()) == {"today", "month", "usd_today"})
+    check("free tier records zero dollars", m3.token_usage()["usd_today"] == 0.0)
+
+    # --- no quota configured means no artificial limit ---
+    m4 = tmp_mem()
+    q4 = LLM(api_key="k-1234567890", provider="custom", base_url=url, memory=m4,
+             free_tier=True)
+    m4.add_cost("research", "llama", 500_000_000, 100_000_000, 0.0)
+    check("free tier with no quota never blocks itself", q4.available)
+
+
 def t_secret_redaction():
     print("\n[secret redaction]")
     import http.server
@@ -1786,7 +1856,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

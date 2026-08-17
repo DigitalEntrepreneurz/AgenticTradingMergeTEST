@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //| T_Both.mq4
 //| Compiled from a strategy spec by the Agentic Trading Firm
-//| 2026-08-16 22:08 UTC
+//| 2026-08-17 01:04 UTC
 //|
 //| Strategy   : 3 EMA Ribbon Pullback
 //| Source     : spec
@@ -35,7 +35,7 @@ input double ATRMultiplier = 1.5;   // stop distance in ATR
 input double RewardRatio   = 2.0;   // target = R x stop
 input double Agreement     = 0.6;  // fraction of rules that must agree
 input int    ATRPeriod     = 14;
-input int    MagicNumber   = 391280;
+input int    MagicNumber   = 127299;
 input int    Slippage      = 20;
 input int    MaxPositions  = 1;
 input bool   TradeOnNewBarOnly = true;

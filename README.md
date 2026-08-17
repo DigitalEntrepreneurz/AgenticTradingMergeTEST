@@ -118,17 +118,20 @@ reset), not a rolling 30-day window. `python cli.py preflight` warns when your
 configured models are unpriced and `free_tier` is still off - that is the one
 misconfiguration that silently halts a working firm.
 
-For scale: at the default cadences the firm draws roughly **105M tokens/month**
-(execution and risk review every 5 min dominate).
+For scale, measured by instrumenting the call path rather than estimating: an
+unattended firm draws about **1.4M tokens/month**. Only research (hourly) and
+scout (12-hourly) call a model at all - risk, execution, backtest and the cost
+optimiser are deterministic code. Each board question you ask costs a further
+~4.6k tokens across three calls.
 
 ### Aggregator keys are many pools, not one
 
 A headline like "1.1B remaining" on a multi-model key is usually the **sum of
 independent per-model budgets** - 33 pools whose largest is 99.5M and whose
 smallest is 2M. An agent pinned to one model does not get 1.1B tokens, it gets
-that model's pool. Execution and risk each draw ~48M/month, so pinned to a 3M
-model they die in **under two days** while the dashboard still shows a billion
-tokens free.
+that model's pool. At ~1.4M tokens/month the firm fits in almost any single
+pool, so this is a robustness feature rather than a capacity one: routing stops
+an agent stranding on an exhausted 2M pool while thirty other pools sit full.
 
 ```yaml
 llm:
@@ -145,6 +148,32 @@ the deterministic engine rather than silently degrading.
 
 `python cli.py preflight` prints the live role-to-model map with remaining
 headroom, and warns when routing is off on a multi-pool key.
+
+### Running fully local (no API key at all)
+
+The firm draws ~1.4M tokens/month, which a modest local model handles easily -
+research runs hourly and needs ~1,900 tokens per call.
+
+```bash
+ollama serve
+ollama pull qwen2.5:14b
+```
+
+```yaml
+llm:
+  provider: "custom"
+  base_url: "http://localhost:11434/v1"
+  api_key: ""
+  free_tier: true
+agents:
+  research: { enabled: true, model: "qwen2.5:14b", budget_usd_per_day: 0 }
+  # ...set every agent's model to the local one
+```
+
+No credential is sent to a local endpoint (an empty `Authorization: Bearer`
+header is rejected by httpx, so it is omitted entirely), nothing is metered,
+and cost accounting records $0. Works with anything OpenAI-compatible: ollama,
+LM Studio, llama.cpp, vLLM.
 
 ## Connecting MT4 and MT5
 
@@ -396,7 +425,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          682 checks, all passing
+tests/test_firm.py          690 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -404,7 +433,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 682 passed, 0 failed
+python tests/test_firm.py            # 690 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

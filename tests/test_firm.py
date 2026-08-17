@@ -1336,6 +1336,55 @@ def t_indicator_compiler():
 
 
 
+def t_local_endpoint():
+    print("\n[local model endpoint]")
+    import http.server
+    import json as _json
+    import threading
+    from firm.llm import LLM, price_for
+
+    check("a local endpoint needs no API key",
+          LLM(api_key="", provider="custom",
+              base_url="http://localhost:11434/v1").enabled)
+    check("a remote endpoint still requires a key",
+          not LLM(api_key="", provider="anthropic").enabled)
+    check("local models are priced at zero", price_for("local/qwen2.5:14b") == (0.0, 0.0))
+
+    seen = {}
+
+    class _Local(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("content-length", 0))
+            self.rfile.read(n)
+            seen["auth"] = self.headers.get("Authorization")
+            body = _json.dumps({
+                "choices": [{"message": {"content": '{"ok": true}'}}],
+                "usage": {"prompt_tokens": 1200, "completion_tokens": 90}}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 8799), _Local)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        m = tmp_mem()
+        llm = LLM(api_key="", provider="custom", base_url="http://127.0.0.1:8799/v1",
+                  memory=m, free_tier=True)
+        r = llm.ask("research", "local/qwen2.5:14b", "sys", "prompt")
+        check("a keyless local call succeeds", r.used_llm, r.error)
+        check("no empty Authorization header is sent", seen.get("auth") is None)
+        check("the local reply parses", r.json() == {"ok": True})
+        check("local usage is recorded", m.tokens_today() == 1290)
+        check("local calls cost nothing", m.cost_today() == 0.0)
+    finally:
+        srv.shutdown()
+
+
 def t_model_routing():
     print("\n[multi-pool model routing]")
     from firm import router as R
@@ -1929,7 +1978,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

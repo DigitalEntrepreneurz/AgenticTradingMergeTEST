@@ -191,15 +191,20 @@ class LLM:
         model = self.resolve_model(model)
         try:
             if self.protocol == "anthropic":
-                headers = {"x-api-key": self.api_key,
-                           "anthropic-version": "2023-06-01",
+                headers = {"anthropic-version": "2023-06-01",
                            "content-type": "application/json"}
+                if self.api_key:
+                    headers["x-api-key"] = self.api_key
                 payload = {"model": model, "max_tokens": max_tokens,
                            "temperature": temperature, "system": system,
                            "messages": [{"role": "user", "content": prompt}]}
             else:
-                headers = {"Authorization": f"Bearer {self.api_key}",
-                           "content-type": "application/json"}
+                headers = {"content-type": "application/json"}
+                # A local server (ollama / LM Studio / llama.cpp) needs no
+                # credential, and httpx rejects an empty "Bearer " header
+                # outright - which would make every local call fail.
+                if self.api_key:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
                 # OpenRouter asks callers to identify themselves
                 if "openrouter" in self.base_url:
                     headers["HTTP-Referer"] = "https://github.com/agentic-trading-firm"

@@ -7,9 +7,11 @@ dozens of independent per-model budgets that happen to sum to a big number.
 model's pool, and when the pool empties the agent stops working while the
 dashboard still reports a billion tokens free.
 
-The firm's two hungriest agents (execution and risk, both on a 5-minute
-cadence) draw ~48M tokens/month each. Pinned to a 3M model that is ~2 days.
-Spread across a tier of interchangeable models it is comfortable.
+Measured, not estimated: an unattended firm calls a model only for research
+(hourly) and scout (12-hourly) - about **1.4M tokens/month**. Risk, execution,
+backtest and cost are deterministic code and call nothing. So routing is not
+about surviving a huge draw; it is about not stranding an agent on a 2M pool
+when 30 other pools are full, and about degrading honestly when one empties.
 
 So routing here is quota-aware failover, in preference order, per role:
 

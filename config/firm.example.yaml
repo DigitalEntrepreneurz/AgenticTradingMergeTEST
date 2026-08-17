@@ -144,6 +144,15 @@ llm:
   # With routing on, each agent picks the best model whose pool still has room
   # and hands off when one empties. See firm/router.py for the pools/order.
   routing: false
+  # ---- fully local, no API key, no quota -------------------------------
+  # Run ollama (`ollama serve` + `ollama pull qwen2.5:14b`) or LM Studio and
+  # point the firm at it. No credential is sent, nothing is metered, and the
+  # firm draws only ~1.4M tokens/month so a modest model keeps up easily.
+  #   provider: "custom"
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key: ""
+  #   free_tier: true
+  # then set every agents.*.model to the local model name, e.g. "qwen2.5:14b".
   # Real limits on a free plan are tokens, not dollars. 0 = no limit.
   max_tokens_per_day: 0
   monthly_token_quota: 0

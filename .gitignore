@@ -1,23 +1,54 @@
+# ---- secrets: never commit ----
 .env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+credentials.*
+secrets.*
+secrets/
+id_rsa*
+id_ed25519*
+.netrc
+.git-credentials
+
+# ---- live config (contains broker login/password once filled in) ----
 config/firm.yaml
-firm/data/*.db
+
+# ---- data: large, regenerable, may contain account activity ----
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.csv.gz
+firm/data/
+firm/data/history/
 bridge/
+*.log
+
+# ---- python ----
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# test artifacts
+# ---- test artifacts ----
 exports/ApiTest.*
 exports/TestExport.*
 exports/CompiledScan.*
 exports/BuiltinTpl.*
 exports/test_pack.json
 
-# added at repo init
-.env.local
-.env.*.local
-*.log
+# ---- os / editor ----
 .DS_Store
-firm/data/
-
-# downloaded market data (large, regenerable)
-firm/data/history/
+Thumbs.db
+.idea/
+.vscode/

@@ -101,6 +101,19 @@ DEFAULT_ROUTE = ["mistral-small-4", "llama-3.3-70b-fp8-fast", "gpt-oss-120b-cf",
 # Stop using a pool at this fraction, leaving headroom for the month's tail.
 SAFETY = 0.95
 
+# Model names that mean "let the provider route". When an agent is configured
+# with one of these, the gateway is doing the job this module does - picking
+# the best model and failing over when one is rate-limited. Two routers
+# fighting is strictly worse than either alone: ours would pin a single model
+# and silently discard the gateway's live reliability/latency scoring, while
+# still being blind to per-minute rate limits that only the provider can see.
+# So we stand down and pass the name straight through.
+PASSTHROUGH = {"auto", "fusion", "default", "best", "router", "smart"}
+
+
+def is_passthrough(model: str) -> bool:
+    return str(model or "").strip().lower() in PASSTHROUGH
+
 
 def pool_for(model: str) -> float:
     """Monthly pool in tokens (not millions). 0 = unmetered/unknown."""

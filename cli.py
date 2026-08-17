@@ -469,7 +469,21 @@ def cmd_preflight(args) -> None:
         else:
             caution("free_tier is on but no token quota is set - nothing caps "
                     "usage if the plan runs out")
-        if cfg.get("llm.routing", False):
+        agent_models = {n: str((a or {}).get("model", ""))
+                        for n, a in (cfg.get("agents") or {}).items()}
+        from firm.router import is_passthrough as _pt
+        gateway_routed = [n for n, mo in agent_models.items() if _pt(mo)]
+        if gateway_routed:
+            good(f"{len(gateway_routed)} agent(s) use the gateway's own routing "
+                 f"('auto'/'fusion') - the firm passes those through untouched")
+            caution("with gateway routing the model varies per call: watch the "
+                    "JSON-compliance line below, since a weak model breaks the "
+                    "strict-JSON contract agents rely on")
+        all_gateway = gateway_routed and len(gateway_routed) == len(agent_models)
+        if all_gateway:
+            good("every agent defers to the gateway - client-side pool routing "
+                 "is inactive by design")
+        elif cfg.get("llm.routing", False):
             from firm import router as _R
             good("multi-pool routing on - agents fail over when a pool empties")
             print("        role -> model (headroom this month):")

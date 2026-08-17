@@ -149,6 +149,33 @@ the deterministic engine rather than silently degrading.
 `python cli.py preflight` prints the live role-to-model map with remaining
 headroom, and warns when routing is off on a multi-pool key.
 
+### If your gateway routes for you (`auto` / `fusion`)
+
+Aggregators that pick the best model per task and fail over when one is
+rate-limited are doing the same job as `firm/router.py` - but better, because
+they can see live model health and per-minute limits that a client cannot.
+Two routers fighting is worse than either alone.
+
+So set the agent's model to the gateway's routing name and the firm **passes it
+through untouched**, even with `llm.routing: true`:
+
+```yaml
+agents:
+  research: { enabled: true, model: "auto" }
+  ceo:      { enabled: true, model: "auto" }
+```
+
+Recognised passthrough names: `auto`, `fusion`, `default`, `best`, `router`,
+`smart`. `python cli.py preflight` reports which agents defer to the gateway
+and stops printing a client-side role-to-model map that would not apply.
+
+**The trade-off:** with gateway routing the model varies per call, and every
+agent here demands strict JSON. A weak model breaks that contract. Replies are
+parsed leniently (fenced blocks and embedded objects are recovered) and a parse
+failure falls back to the deterministic engine rather than acting on garbage -
+but check the JSON line in `preflight --live-call` before trusting it. Pin a
+known-good model for `research` and `ceo` if you see parse failures.
+
 ### Running fully local (no API key at all)
 
 The firm draws ~1.4M tokens/month, which a modest local model handles easily -
@@ -425,7 +452,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          690 checks, all passing
+tests/test_firm.py          698 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -433,7 +460,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 690 passed, 0 failed
+python tests/test_firm.py            # 698 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

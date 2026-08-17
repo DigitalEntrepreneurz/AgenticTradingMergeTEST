@@ -1336,6 +1336,42 @@ def t_indicator_compiler():
 
 
 
+def t_gateway_passthrough():
+    print("\n[gateway auto/fusion passthrough]")
+    from firm.orchestrator import Firm
+    from firm.router import is_passthrough
+
+    check("'auto' is recognised as gateway routing", is_passthrough("auto"))
+    check("'fusion' is recognised", is_passthrough("Fusion"))
+    check("whitespace and case are tolerated", is_passthrough("  AUTO "))
+    check("a real model name is not passthrough", not is_passthrough("magistral-medium"))
+    check("an empty model is not passthrough", not is_passthrough(""))
+
+    def _sent(model_name):
+        f = Firm(memory=tmp_mem(), connect=False)
+        f.cfg.raw.setdefault("llm", {})["routing"] = True
+        f.cfg.raw.setdefault("agents", {}).setdefault("research", {})["model"] = model_name
+        agent = f.agents["research"]
+        f.llm.enabled = True
+        f.llm.free_tier = True
+        seen = {}
+        orig = f.llm.ask
+
+        def spy(a, mo, *x, **k):
+            seen["model"] = mo
+            return orig(a, mo, *x, **k)
+
+        f.llm.ask = spy
+        agent.llm = f.llm
+        agent.think("s", "p")
+        return seen.get("model")
+
+    check("client routing does not override 'auto'", _sent("auto") == "auto")
+    check("client routing does not override 'fusion'", _sent("fusion") == "fusion")
+    check("a pinned model is still routed by pool headroom",
+          _sent("magistral-medium") is not None)
+
+
 def t_local_endpoint():
     print("\n[local model endpoint]")
     import http.server
@@ -1978,7 +2014,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

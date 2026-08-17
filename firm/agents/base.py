@@ -89,7 +89,12 @@ class Agent:
         model = self.model
         if self.cfg.get("llm.routing", False):
             try:
-                from ..router import pick
+                from ..router import is_passthrough, pick
+                if is_passthrough(model):
+                    # The gateway routes for us - it can see live model health
+                    # and per-minute limits that we cannot. Do not second-guess it.
+                    return self.llm.ask(self.name, model, system, prompt,
+                                        max_tokens, temperature)
                 chosen, why = pick(self.mem, self.name, need=max_tokens * 3)
                 if not chosen:
                     # every pool for this role is empty: say so, fall back

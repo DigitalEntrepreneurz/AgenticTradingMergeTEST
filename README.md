@@ -57,6 +57,77 @@ no network required. Point it at MT4/MT5 when you're ready.
 
 ---
 
+## Market data: download M1 once
+
+Downloading each timeframe separately is wasted work. **M5, M15, M30, H1, H4
+and D1 are all derivable from M1** - a higher-timeframe candle is just a group
+of M1 candles (first open, max high, min low, last close, summed volume). This
+is proven in the test suite: bars built directly from a tick path are compared
+against the same bars resampled from M1, and they match **exactly**, to 1e-12,
+at every timeframe.
+
+```bash
+python cli.py history --download EURUSD --days 3650      # ten years, once
+python cli.py history --import-csv EURUSD data/M1.csv    # or a HistData dump
+python cli.py history --list                             # coverage + gaps
+python cli.py history --resample EURUSD H4               # preview a derivation
+```
+
+Stored M1 lives in `firm/data/history/<SYMBOL>_M1.csv`. `bulktest` picks it up
+automatically and serves every timeframe from it, so a sweep across M15/H1/H4
+costs one download rather than three.
+
+**What M1 does not give you**, and you should not pretend otherwise:
+
+* **Intra-candle path.** You know a minute's high and low but not which came
+  first. If price could have hit both your stop and your target inside one
+  candle, the outcome is genuinely ambiguous - the backtester assumes the stop
+  filled first, which is the honest choice.
+* **Spread history.** M1 OHLC is normally bid-only; the spread you pay is
+  modelled, not recorded.
+* **Broker D1 boundaries.** A D1 bar resampled in UTC can differ by a few hours
+  from your broker's own D1, which uses their server timezone.
+
+So: yes, ten years of M1 is enough, and it is the right way to do it. Just do
+not trust a result that depends on sub-minute precision.
+
+## Bulk testing for survival, not for return
+
+```bash
+python cli.py bulktest --symbols EURUSD GBPUSD --timeframes M15 H1 H4 \
+    --min-per-day 0.5 --max-dd 12 --save survivors.json
+```
+
+A sweep ranked by profit puts the most over-fitted configuration on top - it is
+the one that got luckiest. `firm/screen.py` ranks by survival instead, and every
+rule below is a **disqualifier**, not a weighting:
+
+| gate | default | why |
+|---|---|---|
+| trades/day | 0.5 - 20 | must actually trade daily, without overtrading |
+| sample | >= 60 trades | below this nothing is measurable |
+| profit factor | >= 1.25 | |
+| expectancy | >= 0.05R | |
+| max drawdown | <= 12R | the account-ending gate |
+| DD vs return | DD < 50% of total | a big return that costs a big drawdown is leverage, not edge |
+| walk-forward | must be robust | in-sample results are not evidence |
+| equity shape | no single trade > 25% of the return | one lucky trade is not a strategy |
+| losing streak | <= 12 in a row | longer is unholdable in practice |
+
+Worked example from the test suite - five candidates, one survivor:
+
+```
+DEPLOY solid            t/day=1.51  PF=1.55  DD=7.0   surv=0.78
+REJECT overfit_monster  maxDD 40.0R exceeds the 12.0R survival cap
+REJECT one_lucky_trade  lumpy equity: 100% of the return came from one trade
+REJECT fails_out_of_sample  failed walk-forward
+REJECT too_rare         only 20 trades (need 60)
+```
+
+The PF-3.40 "monster" is rejected and the PF-1.55 plodder is kept. That
+inversion is the entire point. If nothing survives, the tool says so - that is
+a result, not a bug.
+
 ## Before you use a real API key
 
 ```bash
@@ -452,7 +523,7 @@ firm/
   indicators.py             SMA/EMA/RSI/ATR/MACD/Bollinger/Donchian, no numpy
 mql/ArenaBridge.mq4/.mq5    the Expert Advisors
 web/                        live dashboard
-tests/test_firm.py          698 checks, all passing
+tests/test_firm.py          728 checks, all passing
 tests/mql_equivalence.py    proves generated MQL fires on the same bars,
                             in the same direction, as the Python backtest
 ```
@@ -460,7 +531,7 @@ tests/mql_equivalence.py    proves generated MQL fires on the same bars,
 ## Tests
 
 ```bash
-python tests/test_firm.py            # 698 passed, 0 failed
+python tests/test_firm.py            # 728 passed, 0 failed
 PYTHONPATH=. python tests/mql_equivalence.py   # 0 mismatches
 ```
 

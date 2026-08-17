@@ -394,6 +394,141 @@ def cmd_llm(args) -> None:
 
 
 
+def cmd_history(args) -> None:
+    """Download M1 once; every other timeframe is derived from it."""
+    from firm import history as H
+    from firm.config import load_config
+    from firm.orchestrator import Firm
+
+    if args.list:
+        rows = H.stored_symbols()
+        if not rows:
+            print("No stored history. Download with:")
+            print("    python cli.py history --download EURUSD --days 3650")
+            print("or import a broker/HistData CSV:")
+            print("    python cli.py history --import-csv EURUSD data/EURUSD_M1.csv")
+            return
+        print(f"{'symbol':10} {'bars':>10} {'days':>7} {'complete':>9} {'gaps':>5}  size")
+        for r in rows:
+            print(f"{r['symbol']:10} {r['bars']:>10,} {r['days']:>7.0f} "
+                  f"{r['completeness']:>8.1f}% {r['gap_count']:>5}  {r['size_mb']} MB")
+        return
+
+    if args.import_csv:
+        sym, path = args.import_csv
+        out = H.import_csv(sym, path, tz_offset_hours=args.tz_offset)
+        print(f"{out['symbol']}: imported {out['imported']:,} M1 bars "
+              f"({out['skipped']} unparseable rows skipped)")
+        print(f"  span {out['days']:.0f} days, completeness {out['completeness']}%, "
+              f"{out['gap_count']} gaps")
+        if out["gaps"]:
+            print("  largest gaps:")
+            for g in out["gaps"][:5]:
+                print(f"    {g['hours']:.1f}h")
+        return
+
+    if args.download:
+        cfg = load_config()
+        f = Firm(cfg=cfg, memory=None, connect=True)
+        br = f.ctx.primary_broker()
+        for sym in args.download:
+            print(f"downloading {sym} M1, target {args.days} days...")
+            out = H.download_m1(br, sym, days=args.days)
+            if out.get("error"):
+                print(f"  FAILED: {out['error']}")
+                continue
+            print(f"  stored {out['stored']:,} bars, {out.get('days', 0):.0f} days, "
+                  f"completeness {out.get('completeness', 0)}%")
+        return
+
+    if args.resample:
+        sym, tf = args.resample
+        m1 = H.load_m1(sym)
+        if not m1:
+            print(f"no stored M1 for {sym}")
+            return
+        out = H.resample(m1, tf)
+        print(f"{sym}: {len(m1):,} M1 bars -> {len(out):,} {tf} bars")
+        cov = H.coverage(out, tf)
+        print(f"  span {cov['days']:.0f} days, {cov['gap_count']} gaps")
+        return
+
+    print("Nothing to do. Try --list, --download, --import-csv or --resample.")
+
+
+def cmd_bulktest(args) -> None:
+    """Mass-test strategies and rank them for survival, not for return."""
+    from firm import history as H
+    from firm import screen as S
+    from firm.config import load_config
+    from firm.lab import Lab
+    from firm.orchestrator import Firm
+
+    cfg = load_config()
+    f = Firm(cfg=cfg, memory=None, connect=True)
+    broker = f.ctx.primary_broker()
+
+    symbols = args.symbols or list(cfg.symbols)
+    timeframes = args.timeframes or ["M15", "H1", "H4"]
+
+    stored = {r["symbol"] for r in H.stored_symbols()}
+    use_local = bool(stored & {s.upper() for s in symbols})
+    if use_local:
+        broker = H.HistoryBroker(broker, symbols)
+        print(f"using stored M1 history for {sorted(stored)} "
+              "(all timeframes resampled from it)")
+    else:
+        print("no stored M1 - using live broker history. "
+              "Download once with: python cli.py history --download EURUSD")
+
+    lab = Lab(broker=broker)
+    print(f"\nsweeping {len(symbols)} symbol(s) x {len(timeframes)} timeframe(s), "
+          f"{args.bars} bars each...")
+
+    def prog(p):
+        print(f"  [{p['done']}/{p['total']}] {p['current']}", flush=True)
+
+    results = lab.sweep(symbols, timeframes, max_combos=args.max_combos,
+                        bars_count=args.bars, optimize_each=not args.fast,
+                        progress=prog)
+
+    rules = dict(S.DEFAULTS)
+    if args.min_per_day is not None:
+        rules["min_trades_per_day"] = args.min_per_day
+    if args.max_dd is not None:
+        rules["max_drawdown_r"] = args.max_dd
+
+    out = S.screen(results, rules, bars_tested=args.bars)
+    print(f"\n{'='*74}")
+    print(f"tested {out['tested']} configurations -> "
+          f"{out['deploy_count']} survive, {out['reject_count']} rejected")
+    print(f"{'='*74}")
+
+    if out["deploy"]:
+        print(f"\n{'strategy':26} {'sym':8} {'tf':4} {'t/day':>6} {'PF':>5} "
+              f"{'expR':>6} {'maxDD':>6} {'surv':>5}")
+        for g in out["deploy"][:args.top]:
+            print(f"{g['strategy'][:26]:26} {g['symbol']:8} {g['timeframe']:4} "
+                  f"{g['trades_per_day']:>6.2f} {g['profit_factor']:>5.2f} "
+                  f"{g['expectancy_r']:>6.3f} {g['max_drawdown_r']:>6.1f} "
+                  f"{g['survival_score']:>5.2f}")
+    else:
+        print("\nNothing survived the screen. That is a result, not a failure -")
+        print("it means none of these configurations is safe to trade daily.")
+
+    if out["common_failures"]:
+        print("\nwhy the rest were rejected:")
+        for reason, n in out["common_failures"]:
+            print(f"  {n:>4}x  {reason}")
+
+    if args.save and out["deploy"]:
+        import json as _json
+        from pathlib import Path as _P
+        dest = _P(args.save)
+        dest.write_text(_json.dumps(out["deploy"], indent=2))
+        print(f"\nsaved {len(out['deploy'])} survivors -> {dest}")
+
+
 def cmd_preflight(args) -> None:
     """Everything that should be true BEFORE a real API key goes in.
 
@@ -718,6 +853,35 @@ def main() -> None:
     i.set_defaults(fn=cmd_inbox)
 
     sub.add_parser("brokers", help="test MT4/MT5 connectivity").set_defaults(fn=cmd_brokers)
+
+    hi = sub.add_parser("history", help="M1 history: download once, derive every timeframe")
+    hi.add_argument("--list", action="store_true", help="show stored history")
+    hi.add_argument("--download", nargs="+", metavar="SYMBOL",
+                    help="pull M1 from the broker")
+    hi.add_argument("--days", type=int, default=3650, help="how far back (default 10y)")
+    hi.add_argument("--import-csv", nargs=2, metavar=("SYMBOL", "FILE"),
+                    help="import a broker/HistData M1 CSV")
+    hi.add_argument("--tz-offset", type=float, default=0.0,
+                    help="hours to subtract from CSV timestamps to reach UTC")
+    hi.add_argument("--resample", nargs=2, metavar=("SYMBOL", "TIMEFRAME"),
+                    help="preview a derived timeframe")
+    hi.set_defaults(fn=cmd_history)
+
+    bt = sub.add_parser("bulktest",
+                        help="mass-test strategies, ranked for survival not return")
+    bt.add_argument("--symbols", nargs="+", help="default: config symbols")
+    bt.add_argument("--timeframes", nargs="+", help="default: M15 H1 H4")
+    bt.add_argument("--bars", type=int, default=2500)
+    bt.add_argument("--max-combos", type=int, default=40)
+    bt.add_argument("--fast", action="store_true",
+                    help="skip per-strategy optimisation (much quicker)")
+    bt.add_argument("--min-per-day", type=float, default=None,
+                    help="minimum trades per day (default 0.5)")
+    bt.add_argument("--max-dd", type=float, default=None,
+                    help="maximum drawdown in R (default 12)")
+    bt.add_argument("--top", type=int, default=20)
+    bt.add_argument("--save", default="", help="write survivors to a JSON file")
+    bt.set_defaults(fn=cmd_bulktest)
 
     pf = sub.add_parser("preflight", help="check everything before using a real API key")
     pf.add_argument("--live-call", action="store_true",

@@ -1336,6 +1336,131 @@ def t_indicator_compiler():
 
 
 
+def t_history_resample():
+    print("\n[M1 history -> every timeframe]")
+    import random as _random
+    from firm.brokers.base import Bar
+    from firm.history import coverage, resample
+
+    # Build a tick path, then M1 from ticks and HTF two ways. If resampling is
+    # lossless, HTF-from-ticks == HTF-from-M1 exactly.
+    rng = _random.Random(42)
+    start = 1_700_000_000 - (1_700_000_000 % 3600)
+    price = 1.1000
+    ticks = []
+    for sec in range(3600 * 12):
+        price += rng.gauss(0, 0.00002)
+        ticks.append((start + sec, price))
+
+    def build(seconds):
+        out, cur, o, h, l, c = [], None, 0, 0, 0, 0
+        for t, pr in ticks:
+            k = (t // seconds) * seconds
+            if cur is None:
+                cur, o, h, l, c = k, pr, pr, pr, pr
+            elif k != cur:
+                out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c))
+                cur, o, h, l, c = k, pr, pr, pr, pr
+            else:
+                h, l, c = max(h, pr), min(l, pr), pr
+        out.append(Bar(time=float(cur), open=o, high=h, low=l, close=c))
+        return out
+
+    m1 = build(60)
+    for tf, sec in (("M5", 300), ("M15", 900), ("M30", 1800), ("H1", 3600)):
+        native, derived = build(sec), resample(m1, tf)
+        same = len(native) == len(derived) and all(
+            a.time == b.time and abs(a.open - b.open) < 1e-12
+            and abs(a.high - b.high) < 1e-12 and abs(a.low - b.low) < 1e-12
+            and abs(a.close - b.close) < 1e-12
+            for a, b in zip(native, derived))
+        check(f"{tf} resampled from M1 matches {tf} built from ticks", same)
+
+    check("M1 resampled to M1 is unchanged", len(resample(m1, "M1")) == len(m1))
+    check("an unknown timeframe is rejected",
+          _raises(lambda: resample(m1, "X9")))
+    check("volume is summed, not averaged",
+          resample([Bar(time=0, open=1, high=1, low=1, close=1, volume=3),
+                    Bar(time=60, open=1, high=1, low=1, close=1, volume=4)],
+                   "H1")[0].volume == 7)
+    check("buckets align to the epoch",
+          all(int(b.time) % 3600 == 0 for b in resample(m1, "H1")))
+    check("empty input is safe", resample([], "H1") == [])
+
+    cov = coverage(m1, "M1")
+    check("coverage counts bars", cov["bars"] == len(m1))
+    check("coverage measures the span", cov["days"] > 0)
+    check("a clean series reports no gaps", cov["gap_count"] == 0)
+    gappy = [m1[0], Bar(time=m1[0].time + 86400, open=1, high=1, low=1, close=1)]
+    check("a real gap is detected", coverage(gappy, "M1")["gap_count"] == 1)
+
+
+def _raises(fn) -> bool:
+    try:
+        fn()
+        return False
+    except Exception:
+        return True
+
+
+def t_survival_screen():
+    print("\n[bulk-test survival screen]")
+    from firm.screen import (consistency, screen, screen_one, trades_per_day)
+
+    smooth = [0] + [i * 0.9 + (i % 3) * 0.2 for i in range(1, 40)]
+    lumpy = [0] * 20 + [30] * 20
+
+    check("a lumpy curve is not smooth", not consistency(lumpy)["smooth"])
+    check("a steady curve is smooth", consistency(smooth)["smooth"])
+    check("one trade dominating is detected",
+          consistency(lumpy)["largest_step_share"] > 0.9)
+    check("an empty curve is handled", consistency([])["largest_step_share"] == 1.0)
+
+    check("H1 trade frequency is per trading day",
+          abs(trades_per_day({"trades": 300}, "H1", 2500) - 2.06) < 0.05)
+    check("a slower timeframe fires less often",
+          trades_per_day({"trades": 300}, "D1", 2500)
+          < trades_per_day({"trades": 300}, "H1", 2500))
+    check("no trades means no frequency",
+          trades_per_day({"trades": 0}, "H1", 2500) == 0.0)
+
+    def mk(name, pf, exp, dd, tr, curve, rob=True):
+        return {"strategy": name, "symbol": "EURUSD", "timeframe": "H1", "params": {},
+                "metrics": {"trades": tr, "profit_factor": pf, "expectancy_r": exp,
+                            "total_r": exp * tr, "max_drawdown_r": dd, "win_rate": 0.5},
+                "walk_forward": {"folds": 3, "robust": rob},
+                "equity_curve": curve, "score": pf}
+
+    sweep = [mk("solid", 1.55, 0.22, 7.0, 220, smooth),
+             mk("monster", 3.40, 1.10, 40.0, 150, smooth),
+             mk("lucky", 2.10, 0.60, 9.0, 80, lumpy),
+             mk("fragile", 1.60, 0.25, 8.0, 200, smooth, rob=False),
+             mk("rare", 1.80, 0.30, 6.0, 20, smooth)]
+    out = screen(sweep, bars_tested=2500)
+
+    check("exactly the survivable strategy is kept", out["deploy_count"] == 1)
+    check("the survivor is the modest one", out["deploy"][0]["strategy"] == "solid")
+    names = {g["strategy"]: g for g in out["rejected"]}
+    check("a deep drawdown is rejected despite the best PF",
+          "monster" in names and "survival cap" in names["monster"]["failures"][0])
+    check("a one-trade wonder is rejected", "lucky" in names)
+    check("failing walk-forward is rejected", "fragile" in names)
+    check("too few trades is rejected", "rare" in names)
+    check("rejections are explained", all(g["failures"] for g in out["rejected"]))
+    check("common failures are tallied", bool(out["common_failures"]))
+
+    # the screen must be able to say "nothing is safe"
+    allbad = screen([mk("x", 0.8, -0.1, 30.0, 200, lumpy)], bars_tested=2500)
+    check("a hopeless sweep yields no survivors", allbad["deploy_count"] == 0)
+
+    # trade-frequency gates
+    rules = dict(screen([], None)["rules"])
+    rules["min_trades_per_day"] = 5.0
+    slow = screen([mk("solid", 1.55, 0.22, 7.0, 220, smooth)], rules, 2500)
+    check("a strategy below the daily-frequency floor is rejected",
+          slow["deploy_count"] == 0)
+
+
 def t_gateway_passthrough():
     print("\n[gateway auto/fusion passthrough]")
     from firm.orchestrator import Firm
@@ -2014,7 +2139,7 @@ if __name__ == "__main__":
                t_analytics, t_ingest, t_lab, t_risk, t_execution_path,
                t_live_guard, t_bridge_protocol, t_mql_files, t_scout,
                t_instructions, t_scout_routing, t_mql_compiler, t_indicator_compiler, t_rule_periods,
-               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
+               t_ingest_keys, t_llm_providers, t_blotter_api, t_drift, t_history_resample, t_survival_screen, t_gateway_passthrough, t_local_endpoint, t_model_routing, t_free_tier_quota, t_secret_redaction, t_spend_ceiling, t_supervisor, t_portfolio_correlation, t_api, t_scout_api, t_export_compiles_specs,
                t_composite_validation, t_firm):
         try:
             fn()

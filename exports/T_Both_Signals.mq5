@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //| T_Both_Signals.mq5  --  SIGNAL INDICATOR (does not trade)
 //| Compiled from a strategy spec by the Agentic Trading Firm
-//| 2026-08-17 01:37 UTC
+//| 2026-08-17 01:52 UTC
 //|
 //| Strategy   : 3 EMA Ribbon Pullback
 //| Symbol/TF  : EURUSD H1
